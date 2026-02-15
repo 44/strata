@@ -175,7 +175,12 @@ function M.open_grep(pattern, files, context)
   local buf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_set_current_buf(buf)
   vim.bo[buf].buftype = "acwrite"
-  vim.bo[buf].filetype = "strata"
+  
+  -- Auto-detect filetype from first matched file
+  local first_file = next(grep_results)
+  local detected_ft = vim.filetype.match({ filename = first_file })
+  vim.bo[buf].filetype = detected_ft or "text"
+  
   vim.bo[buf].buflisted = false
   
   local sections = {}
