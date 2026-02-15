@@ -245,6 +245,110 @@ function M.open_grep(pattern, files, context)
   vim.bo[buf].modified = false
 end
 
+-- Open from quickfix list - collect all files and line ranges
+function M.open_quickfix(context)
+  context = context or 3
+  local qflist = vim.fn.getqflist()
+  
+  if #qflist == 0 then
+    print("Quickfix list is empty")
+    return
+  end
+  
+  -- Group by filename, collect line numbers
+  local files = {}
+  for _, item in ipairs(qflist) do
+    local filename = item.filename or vim.api.nvim_buf_get_name(item.bufnr)
+    if filename and filename ~= "" then
+      if not files[filename] then
+        files[filename] = {lines = {}, min_line = math.huge, max_line = 0}
+      end
+      if item.lnum and item.lnum > 0 then
+        table.insert(files[filename].lines, item.lnum)
+        files[filename].min_line = math.min(files[filename].min_line, item.lnum)
+        files[filename].max_line = math.max(files[filename].max_line, item.lnum)
+      end
+    end
+  end
+  
+  if vim.tbl_isempty(files) then
+    print("No valid files in quickfix list")
+    return
+  end
+  
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(buf)
+  vim.bo[buf].buftype = "acwrite"
+  
+  -- Auto-detect filetype from first file
+  local first_file = next(files)
+  local detected_ft = vim.filetype.match({ filename = first_file })
+  vim.bo[buf].filetype = detected_ft or "text"
+  
+  vim.bo[buf].buflisted = false
+  
+  local sections = {}
+  local all_lines = {}
+  
+  table.insert(all_lines, "# Strata Quickfix")
+  
+  for filename, data in pairs(files) do
+    local file_lines = vim.fn.readfile(filename)
+    if #file_lines == 0 then file_lines = { "" } end
+    
+    -- Calculate section boundaries with context
+    local file_start = math.max(1, data.min_line - context)
+    local file_end = math.min(#file_lines, data.max_line + context)
+    local section_lines = {}
+    
+    for i = file_start, file_end do
+      table.insert(section_lines, file_lines[i])
+    end
+    
+    table.insert(sections, {
+      filename = filename,
+      file_start = file_start,
+      file_end = file_end,
+      orig_line_count = file_end - file_start + 1,
+      is_partial = true,
+    })
+    
+    for _, line in ipairs(section_lines) do
+      table.insert(all_lines, line)
+    end
+  end
+  
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
+  
+  -- Set extmarks
+  local current_line = 1
+  for i = 1, #sections do
+    local section = sections[i]
+    section.start_line = current_line + 1
+    section.end_line = current_line + section.orig_line_count
+    
+    local virt_lines = {
+      { { "──────────", "Comment" } },
+      { { "▶ " .. section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")", "Comment" } },
+      { { "──────────", "Comment" } },
+    }
+    
+    pcall(function()
+      vim.api.nvim_buf_set_extmark(buf, ns, current_line, 0, {
+        virt_lines = virt_lines,
+        virt_lines_above = true,
+        right_gravity = false,
+      })
+    end)
+    
+    current_line = current_line + section.orig_line_count
+  end
+  
+  set_sections(buf, sections)
+  vim.api.nvim_buf_set_name(buf, "strata-quickfix://qf")
+  vim.bo[buf].modified = false
+end
+
 -- Handle :w command
 vim.api.nvim_create_autocmd("BufWriteCmd", {
   pattern = "*",
@@ -347,6 +451,10 @@ function M.setup(opts)
     
     M.open_grep(pattern, files)
   end, { nargs = "+", complete = "file" })
+  
+  vim.api.nvim_create_user_command("StrataQuickfix", function()
+    M.open_quickfix()
+  end, {})
   
   -- Optional keymap for switching back to strata buffer
   if opts.switch_key then
