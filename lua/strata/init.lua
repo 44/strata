@@ -84,7 +84,93 @@ local function update_sections_from_extmarks(buf)
   set_sections(buf, sections)
 end
 
+-- Build rounded border virt_lines for a section header
+local function make_border(name_text)
+  local name_len = #name_text
+  local border_top = "╭" .. string.rep("─", name_len + 2) .. "╮"
+  local border_mid = "│ " .. name_text .. " │"
+  local border_bot = "╰" .. string.rep("─", name_len + 2) .. "╯"
+  return {
+    { { border_top, "Comment" } },
+    { { border_mid, "Comment" } },
+    { { border_bot, "Comment" } },
+  }
+end
+
+-- Navigate to previous file section
+function M.prev_section()
+  local buf = vim.api.nvim_get_current_buf()
+  local sections = get_sections(buf)
+  if #sections == 0 then return end
+  
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  
+  -- Find current section
+  local current_idx = 1
+  for i, section in ipairs(sections) do
+    if cursor_line >= section.start_line and cursor_line <= section.end_line then
+      current_idx = i
+      break
+    elseif cursor_line < section.start_line then
+      current_idx = i
+      break
+    end
+  end
+  
+  -- Go to previous section
+  local target_idx = math.max(1, current_idx - 1)
+  local target_line = sections[target_idx].start_line
+  vim.api.nvim_win_set_cursor(0, {target_line, 0})
+end
+
+-- Navigate to next file section
+function M.next_section()
+  local buf = vim.api.nvim_get_current_buf()
+  local sections = get_sections(buf)
+  if #sections == 0 then return end
+  
+  local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+  
+  -- Find current section
+  local current_idx = #sections
+  for i = #sections, 1, -1 do
+    local section = sections[i]
+    if cursor_line >= section.start_line and cursor_line <= section.end_line then
+      current_idx = i
+      break
+    elseif cursor_line > section.end_line then
+      current_idx = i
+      break
+    end
+  end
+  
+  -- Go to next section
+  local target_idx = math.min(#sections, current_idx + 1)
+  local target_line = sections[target_idx].start_line
+  vim.api.nvim_win_set_cursor(0, {target_line, 0})
+end
+
+-- Set buffer-local navigation keymaps
+local function setup_buffer_keymaps(buf)
+  vim.keymap.set('n', '[f', M.prev_section, { buffer = buf, desc = "Previous strata section" })
+  vim.keymap.set('n', ']f', M.next_section, { buffer = buf, desc = "Next strata section" })
+end
+
+-- Close existing strata buffer by prefix
+local function close_existing(prefix)
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    local bufname = vim.api.nvim_buf_get_name(buf)
+    if bufname:match("^" .. prefix) and vim.api.nvim_buf_is_valid(buf) then
+      vim.api.nvim_buf_delete(buf, { force = true })
+      break
+    end
+  end
+end
+
 function M.open_files(filenames)
+  -- Close existing strata buffer
+  close_existing("strata://files")
+  
   -- Create new scratch buffer with custom save
   local buf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_set_current_buf(buf)
@@ -131,12 +217,7 @@ function M.open_files(filenames)
     local line_count = #section.lines
     section.lines = nil  -- Don't need to store content
     
-    -- Build virt_lines - separator lines for each file
-    local virt_lines = {
-      { { "──────────", "Comment" } },
-      { { "▶ " .. section.filename, "Comment" } },
-      { { "──────────", "Comment" } },
-    }
+    local virt_lines = make_border(section.filename)
     
     local ok, err = pcall(function()
       vim.api.nvim_buf_set_extmark(buf, ns, current_line, 0, {
@@ -156,13 +237,15 @@ function M.open_files(filenames)
   set_sections(buf, sections)
   
   -- Set buffer name
-  vim.api.nvim_buf_set_name(buf, "strata://" .. table.concat(filenames, ", "))
+  vim.api.nvim_buf_set_name(buf, "strata://files")
   
   -- Mark as not modified (setting content marks it as modified)
   vim.bo[buf].modified = false
+  
+  -- Setup buffer-local navigation
+  setup_buffer_keymaps(buf)
 end
 
--- Open files with grep matches - one section per file covering all matches
 function M.open_grep(pattern, files, context)
   context = context or 3
   local grep_results = run_ripgrep(pattern, files, context)
@@ -171,6 +254,9 @@ function M.open_grep(pattern, files, context)
     print("No matches found for: " .. pattern)
     return
   end
+  
+  -- Close existing strata-grep buffer
+  close_existing("strata://grep")
   
   local buf = vim.api.nvim_create_buf(true, false)
   vim.api.nvim_set_current_buf(buf)
@@ -223,11 +309,8 @@ function M.open_grep(pattern, files, context)
     section.start_line = current_line + 1
     section.end_line = current_line + section.orig_line_count
     
-    local virt_lines = {
-      { { "──────────", "Comment" } },
-      { { "▶ " .. section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")", "Comment" } },
-      { { "──────────", "Comment" } },
-    }
+    local name_text = section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")"
+    local virt_lines = make_border(name_text)
     
     pcall(function()
       vim.api.nvim_buf_set_extmark(buf, ns, current_line, 0, {
@@ -241,8 +324,11 @@ function M.open_grep(pattern, files, context)
   end
   
   set_sections(buf, sections)
-  vim.api.nvim_buf_set_name(buf, "strata-grep://" .. pattern)
+  vim.api.nvim_buf_set_name(buf, "strata://grep")
   vim.bo[buf].modified = false
+  
+  -- Setup buffer-local navigation
+  setup_buffer_keymaps(buf)
 end
 
 -- Open from quickfix list - collect all files and line ranges
@@ -254,6 +340,9 @@ function M.open_quickfix(context)
     print("Quickfix list is empty")
     return
   end
+  
+  -- Close existing strata-quickfix buffer
+  close_existing("strata://quickfix")
   
   -- Group by filename, collect line numbers
   local files = {}
@@ -327,11 +416,8 @@ function M.open_quickfix(context)
     section.start_line = current_line + 1
     section.end_line = current_line + section.orig_line_count
     
-    local virt_lines = {
-      { { "──────────", "Comment" } },
-      { { "▶ " .. section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")", "Comment" } },
-      { { "──────────", "Comment" } },
-    }
+    local name_text = section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")"
+    local virt_lines = make_border(name_text)
     
     pcall(function()
       vim.api.nvim_buf_set_extmark(buf, ns, current_line, 0, {
@@ -345,8 +431,11 @@ function M.open_quickfix(context)
   end
   
   set_sections(buf, sections)
-  vim.api.nvim_buf_set_name(buf, "strata-quickfix://qf")
+  vim.api.nvim_buf_set_name(buf, "strata://quickfix")
   vim.bo[buf].modified = false
+  
+  -- Setup buffer-local navigation
+  setup_buffer_keymaps(buf)
 end
 
 -- Handle :w command
