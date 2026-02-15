@@ -247,8 +247,8 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local buf = args.buf
     local bufname = vim.api.nvim_buf_get_name(buf)
     
-    -- Only handle strata buffers
-    if not bufname:match("^strata://") then
+    -- Only handle strata buffers (including strata-grep://)
+    if not bufname:match("^strata%-?%a*://") then
       return
     end
     
