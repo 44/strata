@@ -9,6 +9,7 @@ Edit multiple files in a single buffer with seamless saving.
 ## Features
 
 - **Unified Editing**: Open multiple files in a single buffer
+- **Grep Results Editing**: Edit ripgrep search results across multiple files
 - **Visual Separators**: Clear dividers between file sections with filename indicators
 - **Seamless Saving**: `:w` saves all files automatically
 - **Buffer Management**: Quick switching between strata buffers and regular buffers
@@ -57,6 +58,7 @@ use {
 | Command | Description |
 |---------|-------------|
 | `:Strata <file1> <file2> ...` | Open multiple files in a strata buffer |
+| `:StrataGrep <pattern> [files...]` | Open files with matching lines in a strata buffer |
 | `:StrataSwitch` | Switch to an existing strata buffer |
 
 ### Example
@@ -71,6 +73,34 @@ Or in Lua:
 ```lua
 require("strata").open_files({"todo.md", "someday.md", "done.md"})
 ```
+
+### Grep Workflow
+
+Edit ripgrep search results across multiple files:
+
+```vim
+" Find all TODO items and edit them
+:StrataGrep "TODO" *.md
+
+" Search in specific files
+:StrataGrep "function" lua/*.lua
+
+" Search everywhere (current directory)
+:StrataGrep "FIXME"
+```
+
+Or in Lua:
+
+```lua
+require("strata").open_grep("TODO", {"todo.md", "someday.md"})
+```
+
+**How it works:**
+- Each file with matches appears as one continuous section
+- Section spans from `first_match - 3` to `last_match + 3` lines (context lines)
+- Visual separator shows filename and line numbers: `▶ filename (lines 5-25)`
+- Edit the matches and surrounding context, then `:w` to save changes back to original files
+- Non-matching lines outside the section remain untouched
 
 ### Configuration
 
@@ -100,6 +130,9 @@ nvim -u minimal.lua
 Then run:
 ```vim
 :Strata tests/todo.md tests/someday.md tests/done.md
+
+" Or test grep mode:
+:StrataGrep "\\[ \\x20\\]" tests/*.md
 ```
 
 ## Requirements
