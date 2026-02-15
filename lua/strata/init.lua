@@ -6,6 +6,45 @@ local M = {}
 -- Namespace for extmarks
 local ns = vim.api.nvim_create_namespace("strata")
 
+-- Run ripgrep and parse results
+local function run_ripgrep(pattern, files, context)
+  context = context or 3
+  
+  local cmd = {"rg", "--line-number", "--context=" .. context, pattern}
+  if files and #files > 0 then
+    for _, f in ipairs(files) do
+      table.insert(cmd, f)
+    end
+  else
+    table.insert(cmd, ".")
+  end
+  
+  local output = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 and #output == 0 then
+    return {}
+  end
+  
+  -- Parse output: filename:line:content or filename-line-content (for context)
+  local results = {}
+  local current_file = nil
+  
+  for line in output:gmatch("[^\r\n]+") do
+    local file, lineno, text = line:match("^([^:]+):(%d+):(.*)$")
+    if file then
+      current_file = file
+      if not results[file] then
+        results[file] = {matches = {}, min_line = math.huge, max_line = 0}
+      end
+      local n = tonumber(lineno)
+      table.insert(results[file].matches, n)
+      results[file].min_line = math.min(results[file].min_line, n)
+      results[file].max_line = math.max(results[file].max_line, n)
+    end
+  end
+  
+  return results
+end
+
 -- Get sections from buffer-local storage
 local function get_sections(buf)
   return vim.b[buf].strata_sections or {}
@@ -123,6 +162,84 @@ function M.open_files(filenames)
   vim.bo[buf].modified = false
 end
 
+-- Open files with grep matches - one section per file covering all matches
+function M.open_grep(pattern, files, context)
+  context = context or 3
+  local grep_results = run_ripgrep(pattern, files, context)
+  
+  if vim.tbl_isempty(grep_results) then
+    print("No matches found for: " .. pattern)
+    return
+  end
+  
+  local buf = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_set_current_buf(buf)
+  vim.bo[buf].buftype = "acwrite"
+  vim.bo[buf].filetype = "strata"
+  vim.bo[buf].buflisted = false
+  
+  local sections = {}
+  local all_lines = {}
+  
+  table.insert(all_lines, "# Strata Grep: " .. pattern)
+  
+  for filename, data in pairs(grep_results) do
+    local file_lines = vim.fn.readfile(filename)
+    if #file_lines == 0 then file_lines = { "" } end
+    
+    -- Calculate section boundaries with context
+    local file_start = math.max(1, data.min_line - context)
+    local file_end = math.min(#file_lines, data.max_line + context)
+    local section_lines = {}
+    
+    for i = file_start, file_end do
+      table.insert(section_lines, file_lines[i])
+    end
+    
+    table.insert(sections, {
+      filename = filename,
+      file_start = file_start,  -- Original file line where section starts
+      file_end = file_end,      -- Original file line where section ends
+      orig_line_count = file_end - file_start + 1,
+      is_partial = true,
+    })
+    
+    for _, line in ipairs(section_lines) do
+      table.insert(all_lines, line)
+    end
+  end
+  
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
+  
+  -- Set extmarks
+  local current_line = 1
+  for i = 1, #sections do
+    local section = sections[i]
+    section.start_line = current_line + 1
+    section.end_line = current_line + section.orig_line_count
+    
+    local virt_lines = {
+      { { "──────────", "Comment" } },
+      { { "▶ " .. section.filename .. " (lines " .. section.file_start .. "-" .. section.file_end .. ")", "Comment" } },
+      { { "──────────", "Comment" } },
+    }
+    
+    pcall(function()
+      vim.api.nvim_buf_set_extmark(buf, ns, current_line, 0, {
+        virt_lines = virt_lines,
+        virt_lines_above = true,
+        right_gravity = false,
+      })
+    end)
+    
+    current_line = current_line + section.orig_line_count
+  end
+  
+  set_sections(buf, sections)
+  vim.api.nvim_buf_set_name(buf, "strata-grep://" .. pattern)
+  vim.bo[buf].modified = false
+end
+
 -- Handle :w command
 vim.api.nvim_create_autocmd("BufWriteCmd", {
   pattern = "*",
@@ -143,15 +260,42 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     
     for _, section in ipairs(sections) do
       -- Extract lines for this file
-      local file_lines = {}
+      local section_lines = {}
       for i = section.start_line, section.end_line do
         if lines[i] then
-          table.insert(file_lines, lines[i])
+          table.insert(section_lines, lines[i])
         end
       end
       
-      -- Write to file
-      vim.fn.writefile(file_lines, section.filename)
+      if section.is_partial then
+        -- For partial files: read original, splice in changes, write back
+        local original_lines = vim.fn.readfile(section.filename)
+        local new_lines = {}
+        
+        -- Lines before the section
+        for i = 1, section.file_start - 1 do
+          if original_lines[i] then
+            table.insert(new_lines, original_lines[i])
+          end
+        end
+        
+        -- The edited section
+        for _, line in ipairs(section_lines) do
+          table.insert(new_lines, line)
+        end
+        
+        -- Lines after the section
+        for i = section.file_end + 1, #original_lines do
+          if original_lines[i] then
+            table.insert(new_lines, original_lines[i])
+          end
+        end
+        
+        vim.fn.writefile(new_lines, section.filename)
+      else
+        -- For full files: write directly
+        vim.fn.writefile(section_lines, section.filename)
+      end
     end
     
     -- Mark buffer as not modified
@@ -185,6 +329,19 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("StrataSwitch", function()
     M.switch()
   end, {})
+  
+  vim.api.nvim_create_user_command("StrataGrep", function(cmd_args)
+    local args = vim.split(cmd_args.args, " ")
+    local pattern = args[1]
+    local files = {}
+    
+    -- Separate pattern from files
+    for i = 2, #args do
+      table.insert(files, args[i])
+    end
+    
+    M.open_grep(pattern, files)
+  end, { nargs = "+", complete = "file" })
   
   -- Optional keymap for switching back to strata buffer
   if opts.switch_key then
