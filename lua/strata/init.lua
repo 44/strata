@@ -586,7 +586,6 @@ function M.setup(opts)
 			else
 				vim.print("Usage: Strata files <file1> <file2> ...")
 			end
-
 		elseif subcmd == "grep" then
 			local pattern = args[2]
 			if not pattern then
@@ -600,13 +599,10 @@ function M.setup(opts)
 				end
 			end
 			M.open_grep(pattern, files)
-
 		elseif subcmd == "qf" or subcmd == "quickfix" then
 			M.open_quickfix()
-
 		elseif subcmd == "switch" then
 			M.switch()
-
 		else
 			vim.print("Unknown subcommand: " .. (subcmd or ""))
 			vim.print("Usage: Strata files|grep|qf|quickfix|switch [args]")
