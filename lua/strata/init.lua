@@ -455,6 +455,7 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     
     local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
     local sections = get_sections(buf)
+    local changed_files = {}
     
     for _, section in ipairs(sections) do
       -- Extract lines for this file
@@ -464,6 +465,8 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
           table.insert(section_lines, lines[i])
         end
       end
+      
+      local changed = false
       
       if section.is_partial then
         -- For partial files: read original, splice in changes, write back
@@ -489,16 +492,37 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
           end
         end
         
-        vim.fn.writefile(new_lines, section.filename)
+        -- Check if content changed
+        if vim.deep_equal(original_lines, new_lines) then
+          changed = false
+        else
+          vim.fn.writefile(new_lines, section.filename)
+          changed = true
+        end
       else
         -- For full files: write directly
-        vim.fn.writefile(section_lines, section.filename)
+        local original_lines = vim.fn.readfile(section.filename)
+        if vim.deep_equal(original_lines, section_lines) then
+          changed = false
+        else
+          vim.fn.writefile(section_lines, section.filename)
+          changed = true
+        end
+      end
+      
+      if changed then
+        table.insert(changed_files, section.filename)
       end
     end
     
     -- Mark buffer as not modified
     vim.bo[buf].modified = false
-    print("Saved " .. #sections .. " files")
+    
+    if #changed_files > 0 then
+      print("Saved " .. #changed_files .. " file(s): " .. table.concat(changed_files, ", "))
+    else
+      print("No files changed")
+    end
   end
 })
 
