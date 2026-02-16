@@ -554,31 +554,68 @@ end
 function M.setup(opts)
 	opts = opts or {}
 
-	-- Create user commands
-	vim.api.nvim_create_user_command("Strata", function(cmd_args)
-		local files = vim.split(cmd_args.args, " ")
-		M.open_files(files)
-	end, { nargs = "+", complete = "file" })
+	-- Command completion for subcommands
+	local function strata_complete(arglead, cmdline, cursorpos)
+		local subcommands = { "files", "grep", "qf", "quickfix" }
+		if #arglead == 0 then
+			return subcommands
+		end
+		local matches = {}
+		for _, cmd in ipairs(subcommands) do
+			if cmd:find("^" .. arglead) then
+				table.insert(matches, cmd)
+			end
+		end
+		return matches
+	end
 
+	-- Main Strata command with subcommands
+	vim.api.nvim_create_user_command("Strata", function(cmd_args)
+		local args = vim.split(cmd_args.args, "%s+")
+		local subcmd = args[1]
+
+		if subcmd == "files" or subcmd == "file" then
+			local files = {}
+			for i = 2, #args do
+				if args[i] and args[i]:len() > 0 then
+					table.insert(files, args[i])
+				end
+			end
+			if #files > 0 then
+				M.open_files(files)
+			else
+				vim.print("Usage: Strata files <file1> <file2> ...")
+			end
+
+		elseif subcmd == "grep" then
+			local pattern = args[2]
+			if not pattern then
+				vim.print("Usage: Strata grep <pattern> [files...]")
+				return
+			end
+			local files = {}
+			for i = 3, #args do
+				if args[i] and args[i]:len() > 0 then
+					table.insert(files, args[i])
+				end
+			end
+			M.open_grep(pattern, files)
+
+		elseif subcmd == "qf" or subcmd == "quickfix" then
+			M.open_quickfix()
+
+		elseif subcmd == "switch" then
+			M.switch()
+
+		else
+			vim.print("Unknown subcommand: " .. (subcmd or ""))
+			vim.print("Usage: Strata files|grep|qf|quickfix|switch [args]")
+		end
+	end, { nargs = "*", complete = strata_complete })
+
+	-- Keep old commands as aliases for backward compatibility
 	vim.api.nvim_create_user_command("StrataSwitch", function()
 		M.switch()
-	end, {})
-
-	vim.api.nvim_create_user_command("StrataGrep", function(cmd_args)
-		local args = vim.split(cmd_args.args, " ")
-		local pattern = args[1]
-		local files = {}
-
-		-- Separate pattern from files
-		for i = 2, #args do
-			table.insert(files, args[i])
-		end
-
-		M.open_grep(pattern, files)
-	end, { nargs = "+", complete = "file" })
-
-	vim.api.nvim_create_user_command("StrataQuickfix", function()
-		M.open_quickfix()
 	end, {})
 
 	-- Optional keymap for switching back to strata buffer
