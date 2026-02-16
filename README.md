@@ -57,41 +57,35 @@ use {
 
 | Command | Description |
 |---------|-------------|
-| `:Strata <file1> <file2> ...` | Open multiple files in a strata buffer |
-| `:StrataGrep <pattern> [files...]` | Open files with matching lines in a strata buffer |
-| `:StrataSwitch` | Switch to an existing strata buffer |
+| `:Strata files <file1> <file2> ...` | Open multiple files in a strata buffer |
+| `:Strata grep <pattern> [files...]` | Open files with matching lines in a strata buffer |
+| `:Strata qf` or `:Strata quickfix` | Open files from quickfix list |
+| `:Strata switch` | Switch to an existing strata buffer |
 
-### Example
+**Note:** The old commands (`:Strata`, `:StrataGrep`, `:StrataQuickfix`, `:StrataSwitch`) still work as aliases.
+
+### Examples
 
 ```vim
-" Open three todo files in one buffer
-:Strata todo.md someday.md done.md
+" Open multiple files in one buffer
+:Strata files todo.md someday.md done.md
+
+" Find and edit matching lines
+:Strata grep "TODO" *.md
+:Strata grep "function" lua/*.lua
+
+" Edit quickfix results
+:grep "pattern" .
+:Strata qf
+
+" Switch to existing strata buffer
+:Strata switch
 ```
 
 Or in Lua:
 
 ```lua
 require("strata").open_files({"todo.md", "someday.md", "done.md"})
-```
-
-### Grep Workflow
-
-Edit ripgrep search results across multiple files:
-
-```vim
-" Find all TODO items and edit them
-:StrataGrep "TODO" *.md
-
-" Search in specific files
-:StrataGrep "function" lua/*.lua
-
-" Search everywhere (current directory)
-:StrataGrep "FIXME"
-```
-
-Or in Lua:
-
-```lua
 require("strata").open_grep("TODO", {"todo.md", "someday.md"})
 ```
 
@@ -129,10 +123,9 @@ nvim -u minimal.lua
 
 Then run:
 ```vim
-:Strata tests/todo.md tests/someday.md tests/done.md
-
-" Or test grep mode:
-:StrataGrep "\\[ \\x20\\]" tests/*.md
+:Strata files tests/todo.md tests/someday.md tests/done.md
+:Strata grep "\\[ \\x20\\]" tests/*.md
+:Strata qf
 ```
 
 ## Requirements
