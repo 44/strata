@@ -62,8 +62,6 @@ use {
 | `:Strata qf` or `:Strata quickfix` | Open files from quickfix list |
 | `:Strata switch` | Switch to an existing strata buffer |
 
-**Note:** The old commands (`:Strata`, `:StrataGrep`, `:StrataQuickfix`, `:StrataSwitch`) still work as aliases.
-
 ### Examples
 
 ```vim

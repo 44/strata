@@ -613,11 +613,6 @@ function M.setup(opts)
 		end
 	end, { nargs = "*", complete = strata_complete })
 
-	-- Keep old commands as aliases for backward compatibility
-	vim.api.nvim_create_user_command("StrataSwitch", function()
-		M.switch()
-	end, {})
-
 	-- Optional keymap for switching back to strata buffer
 	if opts.switch_key then
 		vim.keymap.set("n", opts.switch_key, M.switch, { desc = "Switch to strata buffer" })
