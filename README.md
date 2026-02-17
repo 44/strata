@@ -41,7 +41,6 @@ Or in Lua:
 
 ```lua
 require("strata").open_files({"todo.md", "someday.md", "done.md"})
-require("strata").open_grep("TODO", {"todo.md", "someday.md"})
 ```
 
 **How it works:**
