@@ -1,12 +1,66 @@
--- strata.nvim - Edit multiple files in a single buffer
--- Robust version using extmarks to track section boundaries
-
 local M = {}
 
--- Namespace for extmarks
+local function noop() end
+
+local log_file = {
+    debug = noop,
+    info = noop,
+    warn = noop,
+    error = noop,
+}
+
+local notify_level = vim.log.levels.WARN
+
+local log = {
+    debug = function(msg)
+        if notify_level <= vim.log.levels.DEBUG then
+            vim.notify(msg, vim.log.levels.DEBUG)
+        end
+        log_file.debug(msg)
+    end,
+    info = function(msg)
+        if notify_level <= vim.log.levels.INFO then
+            vim.notify(msg, vim.log.levels.INFO)
+        end
+        log_file.info(msg)
+    end,
+    warn = function(msg)
+        if notify_level <= vim.log.levels.WARN then
+            vim.notify(msg, vim.log.levels.WARN)
+        end
+        log_file.warn(msg)
+    end,
+    error = function(msg)
+        log_file.debug("Error: notify_level=" .. notify_level .. ", compared to ERROR=" .. vim.log.levels.ERROR)
+        if notify_level <= vim.log.levels.ERROR then
+            vim.notify(msg, vim.log.levels.ERROR)
+        end
+        log_file.error(msg)
+    end,
+}
+
+local function init_log(lvl, console, ntf_lvl)
+    local ok, pl = pcall(require, "plenary.log")
+    if ok then
+        log_file = pl.new({
+            plugin = "strata",
+            level = lvl,
+            use_console = console,
+        })
+    end
+    notify_level = ntf_lvl or vim.log.levels.WARN
+    log.debug(
+        "Logging initialized at level: "
+            .. lvl
+            .. ", console: "
+            .. tostring(console)
+            .. ", notify_level: "
+            .. notify_level
+    )
+end
+
 local ns = vim.api.nvim_create_namespace("strata")
 
--- Run ripgrep and parse results
 local function run_ripgrep(pattern, files, context)
     context = context or 3
 
@@ -45,22 +99,18 @@ local function run_ripgrep(pattern, files, context)
     return results
 end
 
--- Get sections from buffer-local storage
 local function get_sections(buf)
     return vim.b[buf].strata_sections or {}
 end
 
--- Set sections to buffer-local storage
 local function set_sections(buf, sections)
     vim.b[buf].strata_sections = sections
 end
 
--- Update section boundaries from extmark positions
 local function update_sections_from_extmarks(buf)
     local sections = get_sections(buf)
     local extmarks = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {})
 
-    -- Sort extmarks by line number
     table.sort(extmarks, function(a, b)
         return a[2] < b[2]
     end)
@@ -86,7 +136,6 @@ local function update_sections_from_extmarks(buf)
     set_sections(buf, sections)
 end
 
--- Build rounded border virt_lines for a section header
 local function make_border(name_text)
     local name_len = #name_text
     local border_top = "╭" .. string.rep("─", name_len + 2) .. "╮"
@@ -99,7 +148,6 @@ local function make_border(name_text)
     }
 end
 
--- Navigate to previous file section
 function M.prev_section()
     local buf = vim.api.nvim_get_current_buf()
     local sections = get_sections(buf)
@@ -121,13 +169,11 @@ function M.prev_section()
         end
     end
 
-    -- Go to previous section
     local target_idx = math.max(1, current_idx - 1)
     local target_line = sections[target_idx].start_line
     vim.api.nvim_win_set_cursor(0, { target_line, 0 })
 end
 
--- Navigate to next file section
 function M.next_section()
     local buf = vim.api.nvim_get_current_buf()
     local sections = get_sections(buf)
@@ -150,13 +196,11 @@ function M.next_section()
         end
     end
 
-    -- Go to next section
     local target_idx = math.min(#sections, current_idx + 1)
     local target_line = sections[target_idx].start_line
     vim.api.nvim_win_set_cursor(0, { target_line, 0 })
 end
 
--- Get the section index at current cursor position
 local function get_current_section_idx(buf)
     local sections = get_sections(buf)
     if #sections == 0 then
@@ -174,13 +218,11 @@ local function get_current_section_idx(buf)
     return nil
 end
 
--- Calculate if cursor is closer to start or end of section
 local function is_closer_to_start(section, cursor_line)
     local section_mid = section.start_line + math.floor((section.end_line - section.start_line) / 2)
     return cursor_line <= section_mid
 end
 
--- Update buffer content for a specific section by expanding/shrinking range
 local function update_section_range(buf, section_idx, delta)
     local sections = get_sections(buf)
     local section = sections[section_idx]
@@ -203,25 +245,21 @@ local function update_section_range(buf, section_idx, delta)
     if closer_to_start then
         -- Expand/shrink from the beginning
         if delta > 0 then
-            -- Expand: add lines to the start
             section.file_start = math.max(1, section.file_start - delta)
         else
-            -- Shrink: remove lines from the start
             section.file_start = math.min(section.file_end, section.file_start - delta)
         end
     else
         -- Expand/shrink from the end
         if delta > 0 then
-            -- Expand: add lines to the end
             section.file_end = math.min(total_lines, section.file_end + delta)
         else
-            -- Shrink: remove lines from the end
             section.file_end = math.max(section.file_start, section.file_end + delta)
         end
     end
 
     -- Rebuild entire buffer from all sections
-    local all_lines = {"# Strata"}
+    local all_lines = { "# Strata" }
     local current_line = 1
 
     for i, s in ipairs(sections) do
@@ -234,12 +272,10 @@ local function update_section_range(buf, section_idx, delta)
             end
         end
 
-        -- Update section metadata
         s.start_line = current_line + 1
         s.end_line = current_line + #section_lines
         s.orig_line_count = #section_lines
 
-        -- Add lines to buffer content
         for _, line in ipairs(section_lines) do
             table.insert(all_lines, line)
         end
@@ -247,10 +283,7 @@ local function update_section_range(buf, section_idx, delta)
         current_line = current_line + #section_lines
     end
 
-    -- Clear existing extmarks and rebuild
     vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-
-    -- Set buffer content
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
 
     -- Recreate extmarks
@@ -279,26 +312,23 @@ local function update_section_range(buf, section_idx, delta)
     new_cursor_line = math.max(new_section.start_line, math.min(new_cursor_line, new_section.end_line))
     vim.api.nvim_win_set_cursor(0, { new_cursor_line, 0 })
 
-    -- Don't mark buffer as modified for context changes
     vim.bo[buf].modified = false
 
     return true
 end
 
--- Expand range by 5 lines in the direction of cursor
 function M.expand_context()
     local buf = vim.api.nvim_get_current_buf()
 
-    -- Check if buffer is modified by user
     if vim.bo[buf].modified then
-        vim.notify("Cannot expand: buffer has unsaved changes. Save first with :w")
+        log.error("Buffer has unsaved changes. Save first")
         return
     end
 
     local section_idx = get_current_section_idx(buf)
 
     if not section_idx then
-        vim.notify("Not in a strata section")
+        log.debug("No current section found for cursor line")
         return
     end
 
@@ -306,29 +336,27 @@ function M.expand_context()
     local section = sections[section_idx]
 
     if not section.is_partial then
-        vim.notify("Cannot expand full file sections")
+        log.debug("Cannot expand full file sections")
         return
     end
 
     if update_section_range(buf, section_idx, 5) then
-        vim.notify("Expanded to lines " .. section.file_start .. "-" .. section.file_end)
+        log.debug("Expanded to lines " .. section.file_start .. "-" .. section.file_end)
     end
 end
 
--- Shrink range by 5 lines from the direction of cursor
 function M.shrink_context()
     local buf = vim.api.nvim_get_current_buf()
 
-    -- Check if buffer is modified by user
     if vim.bo[buf].modified then
-        vim.notify("Cannot shrink: buffer has unsaved changes. Save first with :w")
+        log.error("Buffer has unsaved changes. Save first")
         return
     end
 
     local section_idx = get_current_section_idx(buf)
 
     if not section_idx then
-        vim.notify("Not in a strata section")
+        log.debug("No current section found for cursor line")
         return
     end
 
@@ -336,16 +364,15 @@ function M.shrink_context()
     local section = sections[section_idx]
 
     if not section.is_partial then
-        vim.notify("Cannot shrink full file sections")
+        log.debug("Cannot shrink full file sections")
         return
     end
 
     if update_section_range(buf, section_idx, -5) then
-        vim.notify("Shrunk to lines " .. section.file_start .. "-" .. section.file_end)
+        log.debug("Shrunk to lines " .. section.file_start .. "-" .. section.file_end)
     end
 end
 
--- Set buffer-local navigation keymaps
 local function setup_buffer_keymaps(buf)
     vim.keymap.set("n", "[f", M.prev_section, { buffer = buf, desc = "Previous strata section" })
     vim.keymap.set("n", "]f", M.next_section, { buffer = buf, desc = "Next strata section" })
@@ -353,7 +380,6 @@ local function setup_buffer_keymaps(buf)
     vim.keymap.set("n", "zc", M.shrink_context, { buffer = buf, desc = "Shrink strata context" })
 end
 
--- Close existing strata buffer by prefix
 local function close_existing(prefix)
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
         local bufname = vim.api.nvim_buf_get_name(buf)
@@ -365,17 +391,14 @@ local function close_existing(prefix)
 end
 
 function M.open_files(filenames)
-    -- Close existing strata buffer
     close_existing("strata://files")
 
-    -- Create new scratch buffer with custom save
     local buf = vim.api.nvim_create_buf(true, false)
     vim.api.nvim_set_current_buf(buf)
 
     -- buftype=acwrite enables BufWriteCmd
     vim.bo[buf].buftype = "acwrite"
 
-    -- Auto-detect filetype from first file
     local detected_ft = vim.filetype.match({ filename = filenames[1] })
     vim.bo[buf].filetype = detected_ft or "text"
     vim.bo[buf].buflisted = false -- Exclude from buffer list and sessions
@@ -383,10 +406,8 @@ function M.open_files(filenames)
     local sections = {}
     local all_lines = {}
 
-    -- Add header line (not part of any file, provides anchor for first section's virtual lines)
     table.insert(all_lines, "# Strata")
 
-    -- First, collect all file contents
     for _, filename in ipairs(filenames) do
         local lines = vim.fn.readfile(filename)
         if #lines == 0 then
@@ -403,7 +424,6 @@ function M.open_files(filenames)
         end
     end
 
-    -- Set buffer content first
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
 
     -- Now set extmarks at correct positions
@@ -426,22 +446,16 @@ function M.open_files(filenames)
             })
         end)
         if not ok then
-            vim.notify("Error setting extmark for " .. section.filename .. ": " .. tostring(err))
+            log.warn("Failed to set extmark for " .. section.filename .. ": " .. tostring(err))
         end
 
         current_line = current_line + line_count
     end
 
-    -- Store sections
     set_sections(buf, sections)
 
-    -- Set buffer name
     vim.api.nvim_buf_set_name(buf, "strata://files")
-
-    -- Mark as not modified (setting content marks it as modified)
     vim.bo[buf].modified = false
-
-    -- Setup buffer-local navigation
     setup_buffer_keymaps(buf)
 end
 
@@ -450,18 +464,16 @@ function M.open_grep(pattern, files, context)
     local grep_results = run_ripgrep(pattern, files, context)
 
     if vim.tbl_isempty(grep_results) then
-        vim.notify("No matches found for: " .. pattern)
+        log.info("No matches found")
         return
     end
 
-    -- Close existing strata-grep buffer
     close_existing("strata://grep")
 
     local buf = vim.api.nvim_create_buf(true, false)
     vim.api.nvim_set_current_buf(buf)
     vim.bo[buf].buftype = "acwrite"
 
-    -- Auto-detect filetype from first matched file
     local first_file = next(grep_results)
     local detected_ft = vim.filetype.match({ filename = first_file })
     vim.bo[buf].filetype = detected_ft or "text"
@@ -479,7 +491,6 @@ function M.open_grep(pattern, files, context)
             file_lines = { "" }
         end
 
-        -- Calculate section boundaries with context
         local file_start = math.max(1, data.min_line - context)
         local file_end = math.min(#file_lines, data.max_line + context)
         local section_lines = {}
@@ -504,7 +515,6 @@ function M.open_grep(pattern, files, context)
 
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, all_lines)
 
-    -- Set extmarks
     local current_line = 1
     for i = 1, #sections do
         local section = sections[i]
@@ -528,22 +538,18 @@ function M.open_grep(pattern, files, context)
     set_sections(buf, sections)
     vim.api.nvim_buf_set_name(buf, "strata://grep")
     vim.bo[buf].modified = false
-
-    -- Setup buffer-local navigation
     setup_buffer_keymaps(buf)
 end
 
--- Open from quickfix list - collect all files and line ranges
 function M.open_quickfix(context)
     context = context or 3
     local qflist = vim.fn.getqflist()
 
     if #qflist == 0 then
-        vim.notify("Quickfix list is empty")
+        log.info("Quickfix list is empty")
         return
     end
 
-    -- Close existing strata-quickfix buffer
     close_existing("strata://quickfix")
 
     -- Group by filename, collect line numbers
@@ -563,7 +569,7 @@ function M.open_quickfix(context)
     end
 
     if vim.tbl_isempty(files) then
-        vim.notify("No valid files in quickfix list")
+        log.warn("No valid files in quickfix list")
         return
     end
 
@@ -639,23 +645,19 @@ function M.open_quickfix(context)
     vim.api.nvim_buf_set_name(buf, "strata://quickfix")
     vim.bo[buf].modified = false
 
-    -- Setup buffer-local navigation
     setup_buffer_keymaps(buf)
 end
 
--- Handle :w command
 vim.api.nvim_create_autocmd("BufWriteCmd", {
     pattern = "strata://*",
     callback = function(args)
         local buf = args.buf
         local bufname = vim.api.nvim_buf_get_name(buf)
 
-        -- Only handle strata buffers (including strata-grep://)
         if not bufname:match("^strata%-?%a*://") then
             return
         end
 
-        -- Update section boundaries from current extmark positions
         update_sections_from_extmarks(buf)
 
         local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -663,7 +665,6 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
         local changed_files = {}
 
         for _, section in ipairs(sections) do
-            -- Extract lines for this file
             local section_lines = {}
             for i = section.start_line, section.end_line do
                 if lines[i] then
@@ -678,26 +679,22 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
                 local original_lines = vim.fn.readfile(section.filename)
                 local new_lines = {}
 
-                -- Lines before the section
                 for i = 1, section.file_start - 1 do
                     if original_lines[i] then
                         table.insert(new_lines, original_lines[i])
                     end
                 end
 
-                -- The edited section
                 for _, line in ipairs(section_lines) do
                     table.insert(new_lines, line)
                 end
 
-                -- Lines after the section
                 for i = section.file_end + 1, #original_lines do
                     if original_lines[i] then
                         table.insert(new_lines, original_lines[i])
                     end
                 end
 
-                -- Check if content changed
                 if vim.deep_equal(original_lines, new_lines) then
                     changed = false
                 else
@@ -720,18 +717,14 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
             end
         end
 
-        -- Mark buffer as not modified
         vim.bo[buf].modified = false
 
         if #changed_files > 0 then
-            vim.notify("Saved " .. #changed_files .. " file(s): " .. table.concat(changed_files, ", "))
-        else
-            vim.notify("No files changed")
+            log.info("Saved " .. #changed_files .. " file(s): " .. table.concat(changed_files, ", "))
         end
     end,
 })
 
--- Switch to an existing strata buffer or open a new one
 function M.switch()
     for _, buf in ipairs(vim.api.nvim_list_bufs()) do
         local bufname = vim.api.nvim_buf_get_name(buf)
@@ -740,14 +733,13 @@ function M.switch()
             return
         end
     end
-    vim.notify("No strata buffer found")
+    log.debug("No strata buffer found to switch to")
 end
 
--- Setup function for user configuration
 function M.setup(opts)
     opts = opts or {}
+    init_log(opts.log_level or "debug", opts.log_to_console or false, opts.notify_level or vim.log.levels.INFO)
 
-    -- Command completion for subcommands
     local function strata_complete(arglead, cmdline, cursorpos)
         local subcommands = { "files", "grep", "qf", "quickfix" }
         if #arglead == 0 then
@@ -762,7 +754,6 @@ function M.setup(opts)
         return matches
     end
 
-    -- Main Strata command with subcommands
     vim.api.nvim_create_user_command("Strata", function(cmd_args)
         local args = vim.split(cmd_args.args, "%s+")
         local subcmd = args[1]
@@ -777,12 +768,12 @@ function M.setup(opts)
             if #files > 0 then
                 M.open_files(files)
             else
-                vim.notify("Usage: Strata files <file1> <file2> ...")
+                log.warn("Usage: Strata files <file1> <file2> ...")
             end
         elseif subcmd == "grep" then
             local pattern = args[2]
             if not pattern then
-                vim.notify("Usage: Strata grep <pattern> [files...]")
+                log.warn("Usage: Strata grep [args...]")
                 return
             end
             local files = {}
@@ -797,15 +788,9 @@ function M.setup(opts)
         elseif subcmd == "switch" then
             M.switch()
         else
-            vim.notify("Unknown subcommand: " .. (subcmd or ""))
-            vim.notify("Usage: Strata files|grep|qf|quickfix|switch [args]")
+            log.error("Usage: Strata files|grep|qf|quickfix|switch [args]")
         end
     end, { nargs = "*", complete = strata_complete })
-
-    -- Optional keymap for switching back to strata buffer
-    if opts.switch_key then
-        vim.keymap.set("n", opts.switch_key, M.switch, { desc = "Switch to strata buffer" })
-    end
 end
 
 return M
