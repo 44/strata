@@ -452,7 +452,7 @@ end
 
 -- Handle :w command
 vim.api.nvim_create_autocmd("BufWriteCmd", {
-    pattern = "*",
+    pattern = "strata://*",
     callback = function(args)
         local buf = args.buf
         local bufname = vim.api.nvim_buf_get_name(buf)
