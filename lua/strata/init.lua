@@ -313,6 +313,7 @@ local function update_section_range(buf, section_idx, delta)
     vim.api.nvim_win_set_cursor(0, { new_cursor_line, 0 })
 
     vim.bo[buf].modified = false
+    vim.cmd("doautocmd <nomodeline> TextChanged " .. buf)
 
     return true
 end
@@ -718,6 +719,7 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
         end
 
         vim.bo[buf].modified = false
+        vim.cmd("doautocmd <nomodeline> BufWritePost")
 
         if #changed_files > 0 then
             log.info("Saved " .. #changed_files .. " file(s): " .. table.concat(changed_files, ", "))
