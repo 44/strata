@@ -19,6 +19,21 @@ This is project for my personal use, use on your own risk.
 | `:Strata grep <pattern> [files...]` | Open files with matching lines |
 | `:Strata qf` or `:Strata quickfix` | Open files from quickfix list |
 
+### Keybindings
+
+In strata buffers, the following keybindings are available:
+
+| Keybinding | Description |
+|------------|-------------|
+| `[f` | Go to previous section |
+| `]f` | Go to next section |
+| `zo` | Expand context (show more lines around current section) |
+| `zc` | Shrink context (show fewer lines around current section) |
+
+The expand/shrink commands work directionally based on cursor position:
+- If cursor is in the **first half** of a section, lines are added/removed from the **beginning**
+- If cursor is in the **second half**, lines are added/removed from the **end**
+
 ### Examples
 
 ```vim
@@ -43,7 +58,8 @@ Or in Lua:
 require("strata").open_files({"todo.md", "someday.md", "done.md"})
 ```
 
-**How it works:**
+## How it works
+
 - Each file with matches appears as one continuous section
 - Section spans from `first_match - 3` to `last_match + 3` lines (context lines)
 - Edit the matches and surrounding context, then `:w` to save changes back to original files
